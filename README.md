@@ -23,7 +23,7 @@ Virtual Theremin is a browser-based musical instrument built with React, TypeScr
 This project blends:
 
 - **Hand tracking** for gesture-based input
-- **Realtime synthesis** for vocal and bass layers
+- **Real-time synthesis** for vocal and bass layers
 - **Drum triggering** through finger taps
 - **3D visuals** that respond to your performance
 
