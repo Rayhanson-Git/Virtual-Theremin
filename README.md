@@ -118,6 +118,9 @@ top C. No two neighbouring notes clash, so a sweep always sounds like music.
 
 1. **Camera.** `getUserMedia` asks for a 1280 × 720 stream. The preview is mirrored with CSS so it feels like a mirror;
    the frames go to the model as they are.
+   **Which hand is which** was checked with real hands: MediaPipe's own photo of two left hands, fed in as an
+   unmirrored camera frame, is labelled "Left" by the Hand Landmarker this app pins, and a frame with one real hand of
+   each played volume with the left and pitch with the right, as designed.
 2. **Tracking.** MediaPipe's Hand Landmarker (float16 model, running mode `VIDEO`, up to 2 hands, confidence 0.5)
    finds 21 points per hand. It runs on the GPU when it can and falls back to the CPU, and only when the camera has a
    new frame.
@@ -176,7 +179,7 @@ src/
   components/
     VirtualTheremin.tsx   the app: start screen, inputs, panels, layout
     HandOverlay.tsx       hand skeletons over the camera preview
-    ThreeVisualization.tsx  the sphere and rings behind everything
+    ThreeVisualization.tsx  the sphere and rings behind everything, blurred into an ambient glow
     PlayPad.tsx           the mouse and touch pad
     NoteLadder.tsx        every note in reach, the current one lit
     DrumPad.tsx           the four drum pads
@@ -204,9 +207,6 @@ the recording come from the built app, driven in a headless browser with a fake 
 
 ## Status and limits
 
-- **Which hand is "left".** The app uses MediaPipe's handedness labels as they come. MediaPipe assumes a mirrored
-  selfie image and the frames reach it unmirrored, so if volume and pitch feel swapped on your camera, swap hands.
-  This is unchanged from the first version and has not been re-tested with a camera since this update.
 - **A desktop or laptop is best.** The camera mode wants both hands well lit and in frame; on a phone, mouse-and-touch
   mode works but the camera view is small.
 - **The drum samples come from a site this project does not control.** If `tonejs.github.io` is unreachable the drum
@@ -234,6 +234,8 @@ New:
 
 Fixed and changed:
 
+- The 3D scene is blurred into a soft ambient glow, so where it shows between and through the panels it reads as
+  light rather than as a stray shape.
 - The layout was built for a 4K screen (a fixed 1200 px camera and 560 px panels). It now fits anything from a phone
   to a 4K display.
 - MediaPipe's WebAssembly runtime was loaded from version 0.10.0 while the JavaScript API was 0.10.22. Both now come

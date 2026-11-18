@@ -115,5 +115,14 @@ export function ThreeVisualization({ live }: ThreeVisualizationProps) {
     };
   }, [live]);
 
-  return <div ref={containerRef} className="fixed inset-0 -z-10" aria-hidden="true" />;
+  // The scene sits behind the panels as ambient light: blurred, so the parts that
+  // show between and through the panels read as a glow rather than a stray shape.
+  return (
+    <div
+      ref={containerRef}
+      className="fixed inset-0 -z-10 pointer-events-none"
+      style={{ filter: 'blur(36px) saturate(1.25)', opacity: 0.75 }}
+      aria-hidden="true"
+    />
+  );
 }
