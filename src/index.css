@@ -56,3 +56,7 @@
     animation-duration: 0.01ms !important;
   }
 }
+
+/* the 3D scene behind the panels: a quarter-resolution canvas, stretched and blurred into a glow */
+.glow-scene { opacity: 0.75; filter: blur(36px) saturate(1.25); }
+.glow-scene canvas { width: 100% !important; height: 100% !important; image-rendering: auto; }

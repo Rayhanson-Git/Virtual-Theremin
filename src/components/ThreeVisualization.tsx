@@ -11,6 +11,8 @@ interface ThreeVisualizationProps {
  * in its own animation loop, so it follows the hands every frame without
  * re-rendering React.
  */
+const GLOW_RESOLUTION = 0.25;
+
 export function ThreeVisualization({ live }: ThreeVisualizationProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -24,14 +26,19 @@ export function ThreeVisualization({ live }: ThreeVisualizationProps) {
     const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
     camera.position.z = 5;
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // The scene is ambient light behind the panels: it is blurred (see index.css), so it
+    // is drawn at a quarter of the window's resolution and stretched. The blur hides the
+    // lower resolution, and the 3D work drops to a sixteenth of the pixels.
+    const renderer = new THREE.WebGLRenderer({ antialias: false });
+    renderer.setPixelRatio(1);
+    renderer.setSize(window.innerWidth * GLOW_RESOLUTION, window.innerHeight * GLOW_RESOLUTION);
     container.appendChild(renderer.domElement);
 
     const gridHelper = new THREE.GridHelper(20, 20, 0x333333, 0x1a1a1a);
     gridHelper.rotation.x = Math.PI / 2;
     gridHelper.position.z = -2;
+    // under the blur the grid would only smear into a faint check pattern, so it stays hidden
+    gridHelper.visible = false;
     scene.add(gridHelper);
 
     const sphereMaterial = new THREE.MeshStandardMaterial({
@@ -63,7 +70,7 @@ export function ThreeVisualization({ live }: ThreeVisualizationProps) {
     const handleResize = () => {
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setSize(window.innerWidth * GLOW_RESOLUTION, window.innerHeight * GLOW_RESOLUTION);
     };
     window.addEventListener('resize', handleResize);
 
@@ -115,14 +122,7 @@ export function ThreeVisualization({ live }: ThreeVisualizationProps) {
     };
   }, [live]);
 
-  // The scene sits behind the panels as ambient light: blurred, so the parts that
-  // show between and through the panels read as a glow rather than a stray shape.
-  return (
-    <div
-      ref={containerRef}
-      className="fixed inset-0 -z-10 pointer-events-none"
-      style={{ filter: 'blur(36px) saturate(1.25)', opacity: 0.75 }}
-      aria-hidden="true"
-    />
-  );
+  // Stretched over the window and blurred (see index.css), so the parts that show between
+  // and through the panels read as a soft glow rather than a stray shape.
+  return <div ref={containerRef} className="glow-scene fixed inset-0 -z-10 pointer-events-none" aria-hidden="true" />;
 }
