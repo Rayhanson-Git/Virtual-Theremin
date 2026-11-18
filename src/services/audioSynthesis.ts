@@ -1,11 +1,15 @@
 import * as Tone from 'tone';
+import {
+  VOCAL_SCALE_NOTES,
+  voiceById,
+  vocalNoteFor,
+  noteFrequency,
+  vocalFilterFrequency,
+  vocalGain,
+  bassFrequency,
+  bassGain,
+} from './sound';
 
-const VOCAL_SCALE_NOTES = [
-  'C3', 'D3', 'E3', 'G3', 'A3',
-  'C4', 'D4', 'E4', 'G4', 'A4',
-  'C5', 'D5', 'E5', 'G5', 'A5',
-  'C6',
-];
 
 export class AudioSynthesisService {
   private vocalSynth: Tone.PolySynth | null = null;
@@ -18,10 +22,12 @@ export class AudioSynthesisService {
   private isPlaying = false;
 
   private currentFrequency = 440;
-  private currentNote = 'C4';
+  private currentNote: string = 'C4';
   private currentVolume = 0;
   private currentBass = 0;
   private activeNote: string | null = null;
+  private notes: readonly string[] = VOCAL_SCALE_NOTES;
+  private lastPitchValue: number | null = null;
 
   async initialize(): Promise<void> {
     await Tone.start();
@@ -78,15 +84,15 @@ export class AudioSynthesisService {
       return;
     }
 
-    const clampedValue = Math.max(0, Math.min(1, normalizedValue));
-    this.currentVolume = clampedValue;
-    this.vocalGain.gain.rampTo(clampedValue * 0.4, 0.1);
+    this.currentVolume = Math.max(0, Math.min(1, normalizedValue));
+    this.vocalGain.gain.rampTo(vocalGain(normalizedValue), 0.1);
   }
 
   setPitch(normalizedValue: number | null): void {
     if (!this.vocalSynth) return;
 
     if (normalizedValue === null) {
+      this.lastPitchValue = null;
       if (this.activeNote) {
         this.vocalSynth.releaseAll();
         this.activeNote = null;
@@ -94,15 +100,13 @@ export class AudioSynthesisService {
       return;
     }
 
-    const clampedValue = Math.max(0, Math.min(1, normalizedValue));
-    const noteIndex = Math.round(clampedValue * (VOCAL_SCALE_NOTES.length - 1));
-    const note = VOCAL_SCALE_NOTES[noteIndex];
+    this.lastPitchValue = normalizedValue;
+    const note = vocalNoteFor(normalizedValue, this.notes);
     this.currentNote = note;
-    this.currentFrequency = Tone.Frequency(note).toFrequency();
+    this.currentFrequency = noteFrequency(note);
 
     if (this.vocalFilter) {
-      const filterFreq = 800 + clampedValue * 2000;
-      this.vocalFilter.frequency.rampTo(filterFreq, 0.08);
+      this.vocalFilter.frequency.rampTo(vocalFilterFrequency(normalizedValue), 0.08);
     }
 
     if (note !== this.activeNote) {
@@ -123,14 +127,32 @@ export class AudioSynthesisService {
       return;
     }
 
-    const clampedValue = Math.max(0, Math.min(1, normalizedValue));
-    this.currentBass = clampedValue;
+    this.currentBass = Math.max(0, Math.min(1, normalizedValue));
+    this.bassOscillator.frequency.rampTo(bassFrequency(normalizedValue), 0.15);
+    this.bassGainNode.gain.rampTo(bassGain(normalizedValue), 0.15);
+  }
 
-    const bassFreq = 40 + clampedValue * 80;
-    this.bassOscillator.frequency.rampTo(bassFreq, 0.15);
+  /** Changes the notes the right hand sweeps through (see buildScale). */
+  setScale(notes: readonly string[]): void {
+    this.notes = notes;
+    if (this.lastPitchValue !== null) this.setPitch(this.lastPitchValue);
+  }
 
-    const bassVolume = clampedValue * 0.35;
-    this.bassGainNode.gain.rampTo(bassVolume, 0.15);
+  getScale(): readonly string[] {
+    return this.notes;
+  }
+
+  /** Switches the vocal voice preset; the note playing restarts in the new voice. */
+  setVoice(id: string): void {
+    if (!this.vocalSynth) return;
+    const voice = voiceById(id);
+    this.vocalSynth.releaseAll();
+    this.activeNote = null;
+    this.vocalSynth.set({
+      oscillator: voice.oscillator as Tone.OmniOscillatorOptions,
+      envelope: voice.envelope,
+    });
+    if (this.lastPitchValue !== null) this.setPitch(this.lastPitchValue);
   }
 
   getCurrentFrequency(): number {

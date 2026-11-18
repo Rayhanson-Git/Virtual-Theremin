@@ -1,11 +1,21 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { MutableRefObject, useCallback, useEffect, useRef, useState } from 'react';
 import { Music, Upload, Play, Pause, SkipBack, SkipForward } from 'lucide-react';
 
 interface MusicPlayerProps {
+  /** The left-hand volume (0 to 1), read every frame while a song plays. */
+  volumeRef: MutableRefObject<number>;
+  /** The same value, refreshed a few times a second, for the readout. */
   volume: number;
 }
 
-export function MusicPlayer({ volume }: MusicPlayerProps) {
+const formatTime = (t: number) => `${Math.floor(t / 60)}:${Math.floor(t % 60).toString().padStart(2, '0')}`;
+
+/**
+ * Plays an audio file of your own under the instrument. Its volume follows the
+ * left hand, like the vocal. The file never leaves the browser: it is played
+ * from a local object URL.
+ */
+export function MusicPlayer({ volumeRef, volume }: MusicPlayerProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
@@ -14,79 +24,78 @@ export function MusicPlayer({ volume }: MusicPlayerProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const objectUrlRef = useRef<string | null>(null);
 
+  // Follow the hand every frame, but only while something is playing.
   useEffect(() => {
-    if (!audioRef.current) return;
-    audioRef.current.volume = Math.max(0, Math.min(1, volume));
-  }, [volume]);
+    if (!isPlaying) return;
+    let frame = 0;
+    const tick = () => {
+      if (audioRef.current) audioRef.current.volume = Math.max(0, Math.min(1, volumeRef.current));
+      frame = requestAnimationFrame(tick);
+    };
+    tick();
+    return () => cancelAnimationFrame(frame);
+  }, [isPlaying, volumeRef]);
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (objectUrlRef.current) {
-      URL.revokeObjectURL(objectUrlRef.current);
-    }
-
+    if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
     const url = URL.createObjectURL(file);
     objectUrlRef.current = url;
 
-    if (!audioRef.current) {
-      audioRef.current = new Audio();
-    }
-
-    audioRef.current.src = url;
-    audioRef.current.load();
+    const audio = audioRef.current ?? new Audio();
+    audioRef.current = audio;
+    audio.pause();
+    audio.src = url;
+    audio.load();
     setFileName(file.name);
     setIsPlaying(false);
     setCurrentTime(0);
+    setDuration(0);
 
-    audioRef.current.onloadedmetadata = () => {
-      setDuration(audioRef.current?.duration ?? 0);
-    };
-
-    audioRef.current.ontimeupdate = () => {
-      setCurrentTime(audioRef.current?.currentTime ?? 0);
-    };
-
-    audioRef.current.onended = () => {
+    audio.onloadedmetadata = () => setDuration(audio.duration || 0);
+    audio.ontimeupdate = () => setCurrentTime(audio.currentTime);
+    audio.onended = () => {
       setIsPlaying(false);
       setCurrentTime(0);
     };
+    e.target.value = ''; // choosing the same file again still fires a change
   }, []);
 
-  const togglePlay = useCallback(() => {
-    if (!audioRef.current || !fileName) return;
-
+  const togglePlay = useCallback(async () => {
+    const audio = audioRef.current;
+    if (!audio || !fileName) return;
     if (isPlaying) {
-      audioRef.current.pause();
+      audio.pause();
+      setIsPlaying(false);
     } else {
-      audioRef.current.play();
+      try {
+        await audio.play();
+        setIsPlaying(true);
+      } catch (err) {
+        console.error('Could not play the file:', err);
+      }
     }
-    setIsPlaying(!isPlaying);
   }, [isPlaying, fileName]);
 
-  const seek = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    if (!audioRef.current || !duration) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const ratio = (e.clientX - rect.left) / rect.width;
-    audioRef.current.currentTime = ratio * duration;
-  }, [duration]);
+  const seek = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (!audioRef.current || !duration) return;
+      const rect = e.currentTarget.getBoundingClientRect();
+      audioRef.current.currentTime = ((e.clientX - rect.left) / rect.width) * duration;
+    },
+    [duration]
+  );
 
-  const skipBack = useCallback(() => {
-    if (!audioRef.current) return;
-    audioRef.current.currentTime = Math.max(0, audioRef.current.currentTime - 10);
-  }, []);
-
-  const skipForward = useCallback(() => {
-    if (!audioRef.current) return;
-    audioRef.current.currentTime = Math.min(duration, audioRef.current.currentTime + 10);
-  }, [duration]);
-
-  const formatTime = (t: number) => {
-    const m = Math.floor(t / 60);
-    const s = Math.floor(t % 60);
-    return `${m}:${s.toString().padStart(2, '0')}`;
-  };
+  const skip = useCallback(
+    (seconds: number) => {
+      const audio = audioRef.current;
+      if (!audio) return;
+      audio.currentTime = Math.max(0, Math.min(duration || 0, audio.currentTime + seconds));
+    },
+    [duration]
+  );
 
   useEffect(() => {
     return () => {
@@ -94,98 +103,88 @@ export function MusicPlayer({ volume }: MusicPlayerProps) {
         audioRef.current.pause();
         audioRef.current.src = '';
       }
-      if (objectUrlRef.current) {
-        URL.revokeObjectURL(objectUrlRef.current);
-      }
+      if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
     };
   }, []);
 
   return (
-    <div className="bg-black/70 backdrop-blur-md rounded-xl border border-gray-700/80 overflow-hidden" style={{ width: 520 }}>
-      <div className="px-4 py-2 border-b border-gray-700/50 flex items-center gap-2">
-        <Music className="w-4 h-4 text-emerald-400" />
-        <span className="text-white text-sm font-medium">Music Player</span>
-      </div>
+    <section className="panel" aria-label="Music player">
+      <header className="panel-head">
+        <Music className="h-3.5 w-3.5 text-emerald-400" aria-hidden="true" />
+        <h2>Music player</h2>
+        <span className="ml-auto text-[11px] text-white/45">Volume follows the left hand</span>
+      </header>
 
       <div className="p-3">
         {!fileName ? (
           <button
+            type="button"
             onClick={() => fileInputRef.current?.click()}
-            className="w-full flex items-center justify-center gap-2 py-3 border border-dashed border-gray-600 rounded-lg
-                     hover:border-emerald-500/60 hover:bg-emerald-500/5 transition-all duration-200 group"
+            className="group flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-gray-600 py-3 transition-all duration-200 hover:border-emerald-500/60 hover:bg-emerald-500/5"
           >
-            <Upload className="w-4 h-4 text-gray-400 group-hover:text-emerald-400 transition-colors" />
-            <span className="text-gray-400 group-hover:text-emerald-300 text-sm transition-colors">
-              Choose audio file
-            </span>
+            <Upload className="h-4 w-4 text-gray-400 transition-colors group-hover:text-emerald-400" aria-hidden="true" />
+            <span className="text-sm text-gray-400 transition-colors group-hover:text-emerald-300">Choose an audio file</span>
           </button>
         ) : (
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-emerald-500/20 flex items-center justify-center flex-shrink-0">
-              <Music className="w-5 h-5 text-emerald-400" />
-            </div>
-
             <div className="min-w-0 flex-1 space-y-1">
               <div className="flex items-center justify-between gap-2">
-                <p className="text-white text-xs truncate">{fileName}</p>
-                <p className="text-gray-400 text-[10px] tabular-nums flex-shrink-0">{formatTime(currentTime)} / {formatTime(duration)}</p>
+                <p className="truncate text-xs text-white">{fileName}</p>
+                <p className="flex-shrink-0 text-[10px] tabular-nums text-gray-400">
+                  {formatTime(currentTime)} / {formatTime(duration)}
+                </p>
               </div>
               <div
-                className="w-full h-1.5 bg-gray-700 rounded-full cursor-pointer group"
+                className="group h-1.5 w-full cursor-pointer rounded-full bg-gray-700"
                 onClick={seek}
+                role="slider"
+                aria-label="Position in the song"
+                aria-valuemin={0}
+                aria-valuemax={Math.round(duration)}
+                aria-valuenow={Math.round(currentTime)}
               >
                 <div
-                  className="h-full bg-gradient-to-r from-emerald-500 to-emerald-300 rounded-full relative transition-all duration-100"
+                  className="relative h-full rounded-full bg-gradient-to-r from-emerald-500 to-emerald-300"
                   style={{ width: `${duration ? (currentTime / duration) * 100 : 0}%` }}
-                >
-                  <div className="absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-full shadow-md
-                                opacity-0 group-hover:opacity-100 transition-opacity" />
-                </div>
+                />
               </div>
             </div>
 
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <button onClick={skipBack} className="text-gray-400 hover:text-white transition-colors">
-                <SkipBack className="w-4 h-4" />
+            <div className="flex flex-shrink-0 items-center gap-2">
+              <button type="button" onClick={() => skip(-10)} className="text-gray-400 transition-colors hover:text-white" aria-label="Back 10 seconds">
+                <SkipBack className="h-4 w-4" aria-hidden="true" />
               </button>
               <button
+                type="button"
                 onClick={togglePlay}
-                className="w-9 h-9 rounded-full bg-emerald-500 hover:bg-emerald-400 flex items-center justify-center
-                         transition-colors shadow-lg shadow-emerald-500/30"
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-500 shadow-lg shadow-emerald-500/30 transition-colors hover:bg-emerald-400"
+                aria-label={isPlaying ? 'Pause' : 'Play'}
               >
-                {isPlaying ? (
-                  <Pause className="w-4 h-4 text-white" />
-                ) : (
-                  <Play className="w-4 h-4 text-white ml-0.5" />
-                )}
+                {isPlaying ? <Pause className="h-4 w-4 text-white" /> : <Play className="ml-0.5 h-4 w-4 text-white" />}
               </button>
-              <button onClick={skipForward} className="text-gray-400 hover:text-white transition-colors">
-                <SkipForward className="w-4 h-4" />
+              <button type="button" onClick={() => skip(10)} className="text-gray-400 transition-colors hover:text-white" aria-label="Forward 10 seconds">
+                <SkipForward className="h-4 w-4" aria-hidden="true" />
               </button>
             </div>
 
-            <div className="flex-shrink-0 text-center px-2 border-l border-gray-700/50">
-              <div className="text-gray-500 text-[10px]">Vol</div>
-              <div className="text-cyan-300 font-medium tabular-nums text-xs">{Math.round(volume * 100)}%</div>
+            <div className="flex-shrink-0 border-l border-gray-700/50 px-2 text-center">
+              <div className="text-[10px] text-gray-500">Vol</div>
+              <div className="text-xs font-medium tabular-nums text-cyan-300">{Math.round(volume * 100)}%</div>
             </div>
 
             <button
+              type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="text-gray-500 hover:text-gray-300 transition-colors flex-shrink-0"
+              className="flex-shrink-0 text-gray-500 transition-colors hover:text-gray-300"
+              aria-label="Choose another file"
             >
-              <Upload className="w-4 h-4" />
+              <Upload className="h-4 w-4" aria-hidden="true" />
             </button>
           </div>
         )}
 
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="audio/*"
-          onChange={handleFileSelect}
-          className="hidden"
-        />
+        <input ref={fileInputRef} type="file" accept="audio/*" onChange={handleFileSelect} className="hidden" />
       </div>
-    </div>
+    </section>
   );
 }

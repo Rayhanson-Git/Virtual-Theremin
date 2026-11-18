@@ -1,23 +1,24 @@
 import { HandLandmarker, FilesetResolver, HandLandmarkerResult } from '@mediapipe/tasks-vision';
+import {
+  HandLandmark,
+  RightHandTaps,
+  INDEX_TIP,
+  MIDDLE_TIP,
+  RING_TIP,
+  PINKY_TIP,
+  computeFingerSpread,
+  computeHandRotation,
+  computePinchSpread,
+  createTapState,
+  detectTap,
+} from './gestures';
 
-export interface HandLandmark {
-  x: number;
-  y: number;
-  z: number;
-}
+export type { HandLandmark, DrumHit, RightHandTaps } from './gestures';
+export { HAND_CONNECTIONS } from './gestures';
 
 export interface HandData {
   landmarks: HandLandmark[];
   label: string;
-}
-
-export type DrumHit = 'kick' | 'snare' | 'hihat' | 'clap';
-
-export interface RightHandTaps {
-  kick: boolean;
-  snare: boolean;
-  hihat: boolean;
-  clap: boolean;
 }
 
 export interface HandPositions {
@@ -28,132 +29,26 @@ export interface HandPositions {
   hands: HandData[];
 }
 
-const THUMB_TIP = 4;
-const INDEX_TIP = 8;
-const MIDDLE_TIP = 12;
-const RING_TIP = 16;
-const PINKY_TIP = 20;
-const WRIST = 0;
-const MIDDLE_MCP = 9;
+// The wasm runtime must come from the same release as the JavaScript API in
+// package.json; a mismatch fails in odd ways. versions.test.ts checks this.
+export const MEDIAPIPE_VERSION = '0.10.22-rc.20250304';
+export const MEDIAPIPE_WASM_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_VERSION}/wasm`;
+export const HAND_MODEL_URL =
+  'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
 
-export const HAND_CONNECTIONS: [number, number][] = [
-  [0, 1], [1, 2], [2, 3], [3, 4],
-  [0, 5], [5, 6], [6, 7], [7, 8],
-  [0, 9], [9, 10], [10, 11], [11, 12],
-  [0, 13], [13, 14], [14, 15], [15, 16],
-  [0, 17], [17, 18], [18, 19], [19, 20],
-  [5, 9], [9, 13], [13, 17],
-];
-
-function distance2D(
-  a: { x: number; y: number },
-  b: { x: number; y: number }
-): number {
-  return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
-}
-
-function computeFingerSpread(landmarks: HandLandmark[]): number {
-  const tips = [THUMB_TIP, INDEX_TIP, MIDDLE_TIP, RING_TIP, PINKY_TIP];
-  const wrist = landmarks[WRIST];
-
-  const handSize = distance2D(wrist, landmarks[MIDDLE_TIP]);
-  if (handSize < 0.01) return 0;
-
-  let totalDist = 0;
-  let count = 0;
-  for (let i = 0; i < tips.length; i++) {
-    for (let j = i + 1; j < tips.length; j++) {
-      totalDist += distance2D(landmarks[tips[i]], landmarks[tips[j]]);
-      count++;
-    }
-  }
-
-  const avgDist = totalDist / count;
-  const normalized = avgDist / handSize;
-
-  return Math.max(0, Math.min(1, (normalized - 0.3) / 1.2));
-}
-
-function computeHandRotation(landmarks: HandLandmark[]): number {
-  const wrist = landmarks[WRIST];
-  const middleMcp = landmarks[MIDDLE_MCP];
-
-  const dx = middleMcp.x - wrist.x;
-  const dy = middleMcp.y - wrist.y;
-
-  const angle = Math.atan2(dx, -dy);
-
-  const rightLimit = -90 * (Math.PI / 180);
-  const leftLimit = 50 * (Math.PI / 180);
-  const range = leftLimit - rightLimit;
-
-  const normalized = (angle - rightLimit) / range;
-
-  return Math.max(0, Math.min(1, normalized));
-}
-
-function computePinchSpread(landmarks: HandLandmark[]): number {
-  const thumb = landmarks[THUMB_TIP];
-  const index = landmarks[INDEX_TIP];
-  const wrist = landmarks[WRIST];
-  const middleTip = landmarks[MIDDLE_TIP];
-
-  const handSize = distance2D(wrist, middleTip);
-  if (handSize < 0.01) return 0;
-
-  const pinchDist = distance2D(thumb, index) / handSize;
-
-  return Math.max(0, Math.min(1, pinchDist / 1.0));
-}
-
-const PINCH_THRESHOLD = 0.25;
-const RELEASE_THRESHOLD = 0.35;
-
-interface TapState {
-  wasDown: boolean;
-  fired: boolean;
-}
-
-function createTapState(): TapState {
-  return { wasDown: false, fired: false };
-}
-
-function detectTap(
-  landmarks: HandLandmark[],
-  fingerTip: number,
-  state: TapState
-): { tap: boolean; state: TapState } {
-  const thumb = landmarks[THUMB_TIP];
-  const finger = landmarks[fingerTip];
-  const wrist = landmarks[WRIST];
-  const middleTip = landmarks[MIDDLE_TIP];
-
-  const handSize = distance2D(wrist, middleTip);
-  if (handSize < 0.01) return { tap: false, state };
-
-  const dist = distance2D(thumb, finger) / handSize;
-  const isDown = dist < PINCH_THRESHOLD;
-  const isUp = dist > RELEASE_THRESHOLD;
-
-  let tap = false;
-  const newState = { ...state };
-
-  if (isDown && !state.wasDown) {
-    tap = true;
-    newState.wasDown = true;
-    newState.fired = true;
-  } else if (isUp) {
-    newState.wasDown = false;
-    newState.fired = false;
-  }
-
-  return { tap, state: newState };
-}
+const LANDMARKER_OPTIONS = {
+  runningMode: 'VIDEO' as const,
+  numHands: 2,
+  minHandDetectionConfidence: 0.5,
+  minHandPresenceConfidence: 0.5,
+  minTrackingConfidence: 0.5,
+};
 
 export class HandTrackingService {
   private handLandmarker: HandLandmarker | null = null;
   private videoElement: HTMLVideoElement | null = null;
   private animationFrameId: number | null = null;
+  private lastVideoTime = -1;
   private onUpdateCallback: ((positions: HandPositions) => void) | null = null;
   private tapStates = {
     index: createTapState(),
@@ -165,21 +60,22 @@ export class HandTrackingService {
   async initialize(videoElement: HTMLVideoElement): Promise<void> {
     this.videoElement = videoElement;
 
-    const vision = await FilesetResolver.forVisionTasks(
-      'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm'
-    );
+    const vision = await FilesetResolver.forVisionTasks(MEDIAPIPE_WASM_URL);
 
-    this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
-      baseOptions: {
-        modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
-        delegate: 'GPU'
-      },
-      runningMode: 'VIDEO',
-      numHands: 2,
-      minHandDetectionConfidence: 0.5,
-      minHandPresenceConfidence: 0.5,
-      minTrackingConfidence: 0.5
-    });
+    // The GPU delegate is much faster, but not every browser and graphics
+    // driver supports it; fall back to the CPU rather than failing.
+    try {
+      this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
+        baseOptions: { modelAssetPath: HAND_MODEL_URL, delegate: 'GPU' },
+        ...LANDMARKER_OPTIONS,
+      });
+    } catch (gpuError) {
+      console.warn('Hand tracking: GPU delegate unavailable, using the CPU.', gpuError);
+      this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
+        baseOptions: { modelAssetPath: HAND_MODEL_URL, delegate: 'CPU' },
+        ...LANDMARKER_OPTIONS,
+      });
+    }
   }
 
   startTracking(onUpdate: (positions: HandPositions) => void): void {
@@ -189,19 +85,17 @@ export class HandTrackingService {
 
   private detectHands = (): void => {
     if (!this.handLandmarker || !this.videoElement) return;
-
-    const startTimeMs = performance.now();
-    const results: HandLandmarkerResult = this.handLandmarker.detectForVideo(
-      this.videoElement,
-      startTimeMs
-    );
-
-    const positions = this.extractHandPositions(results);
-    if (this.onUpdateCallback) {
-      this.onUpdateCallback(positions);
-    }
-
     this.animationFrameId = requestAnimationFrame(this.detectHands);
+
+    // Only run the model when the camera has delivered a new frame: the
+    // display often refreshes faster than the camera.
+    const video = this.videoElement;
+    if (video.readyState < 2 || video.currentTime === this.lastVideoTime) return;
+    this.lastVideoTime = video.currentTime;
+
+    const results: HandLandmarkerResult = this.handLandmarker.detectForVideo(video, performance.now());
+    const positions = this.extractHandPositions(results);
+    this.onUpdateCallback?.(positions);
   };
 
   private extractHandPositions(results: HandLandmarkerResult): HandPositions {
@@ -210,7 +104,7 @@ export class HandTrackingService {
       rightFingerSpread: null,
       rightRotation: null,
       rightTaps: { kick: false, snare: false, hihat: false, clap: false },
-      hands: []
+      hands: [],
     };
 
     if (!results.landmarks || results.landmarks.length === 0) {
@@ -225,6 +119,9 @@ export class HandTrackingService {
         continue;
       }
 
+      // MediaPipe's handedness label, used as is. MediaPipe assumes a mirrored
+      // (selfie) image, and frames here go to the model unmirrored (only the
+      // preview is flipped, in CSS), so check with a camera before swapping.
       const label = handedness[0].categoryName;
 
       positions.hands.push({ landmarks, label });
@@ -235,6 +132,7 @@ export class HandTrackingService {
         positions.rightFingerSpread = computeFingerSpread(landmarks);
         positions.rightRotation = computeHandRotation(landmarks);
 
+        // thumb to index = kick, middle = snare, ring = hi-hat, pinky = clap
         const indexResult = detectTap(landmarks, INDEX_TIP, this.tapStates.index);
         this.tapStates.index = indexResult.state;
         positions.rightTaps.kick = indexResult.tap;
@@ -265,6 +163,7 @@ export class HandTrackingService {
 
   destroy(): void {
     this.stopTracking();
+    this.onUpdateCallback = null;
     if (this.handLandmarker) {
       this.handLandmarker.close();
       this.handLandmarker = null;

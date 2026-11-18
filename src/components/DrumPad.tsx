@@ -1,45 +1,64 @@
 import { DrumHit } from '../services/handTracking';
+import type { DrumStatus } from '../services/drumSynthesis';
+import { DRUM_COLORS, DRUM_PADS } from '../services/liveState';
 
 interface DrumPadProps {
   activeDrum: DrumHit | null;
+  status: DrumStatus;
+  onHit: (drum: DrumHit) => void;
 }
 
-const DRUMS: { id: DrumHit; label: string; finger: string; color: string; glow: string; bg: string }[] = [
-  { id: 'kick', label: 'KICK', finger: 'Index', color: 'text-orange-400', glow: 'shadow-orange-500/60', bg: 'bg-orange-500' },
-  { id: 'snare', label: 'SNARE', finger: 'Middle', color: 'text-cyan-400', glow: 'shadow-cyan-500/60', bg: 'bg-cyan-500' },
-  { id: 'hihat', label: 'HI-HAT', finger: 'Ring', color: 'text-lime-400', glow: 'shadow-lime-500/60', bg: 'bg-lime-500' },
-  { id: 'clap', label: 'CLAP', finger: 'Pinky', color: 'text-pink-400', glow: 'shadow-pink-500/60', bg: 'bg-pink-500' },
-];
 
-export function DrumPad({ activeDrum }: DrumPadProps) {
+const STATUS_TEXT: Record<DrumStatus, string> = {
+  loading: 'Loading samples…',
+  ready: 'Thumb to finger, a key, or a click',
+  partial: 'Some samples failed to load',
+  failed: 'Drum samples could not load',
+};
+
+export function DrumPad({ activeDrum, status, onHit }: DrumPadProps) {
+  const broken = status === 'failed' || status === 'partial';
   return (
-    <div className="bg-black/70 backdrop-blur-md rounded-lg border border-gray-700/80 overflow-hidden" style={{ width: 520 }}>
-      <div className="px-3 py-1.5 flex items-center gap-2">
-        <div className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse" />
-        <span className="text-white text-xs font-medium">Drums</span>
-        <div className="flex-1 flex justify-end gap-1.5">
-          {DRUMS.map((drum) => {
-            const isActive = activeDrum === drum.id;
-            return (
-              <div
-                key={drum.id}
-                className={`
-                  relative rounded px-3 py-1 text-center transition-all duration-75 select-none border
-                  ${isActive
-                    ? `border-white/40 ${drum.glow} shadow-md scale-95 ${drum.bg} bg-opacity-20`
-                    : 'border-gray-700/50'
-                  }
-                `}
-                style={!isActive ? { background: 'rgba(255,255,255,0.03)' } : undefined}
-              >
-                <span className={`text-[11px] font-bold tracking-wide ${isActive ? 'text-white' : drum.color}`}>
-                  {drum.label}
-                </span>
-              </div>
-            );
-          })}
-        </div>
+    <section className="panel" aria-label="Drums">
+      <header className="panel-head">
+        <span className="h-1.5 w-1.5 rounded-full bg-orange-400" aria-hidden="true" />
+        <h2>Drums</h2>
+        <span className={`ml-auto text-[11px] ${broken ? 'text-red-300' : 'text-white/45'}`} role="status">
+          {STATUS_TEXT[status]}
+        </span>
+      </header>
+      <div className="grid grid-cols-4 gap-2 p-3">
+        {DRUM_PADS.map((drum) => {
+          const isActive = activeDrum === drum.id;
+          const color = DRUM_COLORS[drum.id];
+          return (
+            <button
+              key={drum.id}
+              type="button"
+              onPointerDown={(e) => {
+                e.preventDefault();
+                onHit(drum.id);
+              }}
+              className="group relative rounded-xl border px-2 py-2.5 text-center transition-[transform,background-color,border-color] duration-75 select-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+              style={{
+                borderColor: isActive ? color : 'rgba(255,255,255,0.1)',
+                background: isActive ? `${color}40` : 'rgba(255,255,255,0.03)',
+                transform: isActive ? 'scale(0.95)' : undefined,
+                boxShadow: isActive ? `0 0 24px ${color}66` : undefined,
+                outlineColor: color,
+              }}
+              aria-label={`${drum.label}: ${drum.finger.toLowerCase()} finger, or key ${drum.key}`}
+            >
+              <span className="block text-xs font-semibold tracking-wide" style={{ color: isActive ? '#fff' : color }}>
+                {drum.label}
+              </span>
+              <span className="mt-0.5 block text-[10px] text-white/40">
+                {drum.finger} · <kbd className="font-mono">{drum.key}</kbd>
+              </span>
+            </button>
+          );
+        })}
       </div>
-    </div>
+    </section>
   );
 }
